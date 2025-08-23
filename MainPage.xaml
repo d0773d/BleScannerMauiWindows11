@@ -1,0 +1,63 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="BleScannerMaui.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="BLE Scanner">
+
+    <VerticalStackLayout Padding="12" Spacing="8">
+
+        <HorizontalStackLayout Spacing="8">
+            <Button
+                x:Name="ScanButton"
+                Clicked="ScanButton_Clicked"
+                Text="Scan" />
+            <Button
+                x:Name="StopScanButton"
+                Clicked="StopScanButton_Clicked"
+                Text="Stop Scan" />
+            <Button
+                x:Name="ConnectButton"
+                Clicked="ConnectButton_Clicked"
+                Text="Connect" />
+            <Button
+                x:Name="DisconnectButton"
+                Clicked="DisconnectButton_Clicked"
+                Text="Disconnect" />
+        </HorizontalStackLayout>
+
+        <Label FontAttributes="Bold" Text="Discovered Devices:" />
+
+        <CollectionView
+            x:Name="DevicesCollection"
+            HeightRequest="220"
+            SelectionChanged="DevicesCollection_SelectionChanged"
+            SelectionMode="Single">
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Label FontAttributes="Bold" Text="{Binding Name}" />
+                        <Label
+                            Grid.Column="1"
+                            FontSize="10"
+                            Text="{Binding Id}" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <Label FontAttributes="Bold" Text="Log:" />
+
+        <Editor
+            x:Name="LogEditor"
+            AutoSize="TextChanges"
+            HeightRequest="220"
+            IsReadOnly="True" />
+
+        <Button Clicked="ClearLogButton_Clicked" Text="Clear Log" />
+    </VerticalStackLayout>
+</ContentPage>
