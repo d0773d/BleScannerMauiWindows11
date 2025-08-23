@@ -24,6 +24,7 @@
                 x:Name="DisconnectButton"
                 Clicked="DisconnectButton_Clicked"
                 Text="Disconnect" />
+            <Button Clicked="OnClearDevicesClicked" Text="Clear Device List" />
         </HorizontalStackLayout>
 
         <Label FontAttributes="Bold" Text="Discovered Devices:" />

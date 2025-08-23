@@ -20,5 +20,7 @@ namespace BleScannerMaui
         IDevice? ConnectedDevice { get; }
         bool IsScanning { get; }
         bool IsConnected { get; }
+
+        void ClearDiscoveredDevices();
     }
 }

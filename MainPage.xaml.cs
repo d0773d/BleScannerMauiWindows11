@@ -92,6 +92,13 @@ namespace BleScannerMaui
             await _bluetooth.DisconnectAsync();
         }
 
+        private void OnClearDevicesClicked(object sender, EventArgs e)
+        {
+            _devices.Clear();
+            _bluetooth.ClearDiscoveredDevices(); // <-- Add this if available
+            _log.Append("Device list cleared by user.");
+        }
+
         void ClearLogButton_Clicked(object sender, EventArgs e)
         {
             _log.Clear();

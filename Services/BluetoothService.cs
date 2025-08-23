@@ -1,12 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using Microsoft.Maui.ApplicationModel;
 using Plugin.BLE;
+using Plugin.BLE.Abstractions;
 using Plugin.BLE.Abstractions.Contracts;
 using Plugin.BLE.Abstractions.EventArgs;
-using Microsoft.Maui.ApplicationModel;
-using Plugin.BLE.Abstractions;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Threading.Tasks;
 
 
 #if WINDOWS
@@ -18,10 +19,14 @@ namespace BleScannerMaui
 {
     public class BluetoothService : IBluetoothService
     {
+
         readonly IAdapter _adapter;
         readonly IBluetoothLE _ble;
         readonly ILogService _log;
-        readonly List<IDevice> _devices = new();
+
+        private ICharacteristic _notifyCharacteristic;
+        readonly ObservableCollection<IDevice> _devices = new();
+
 
         public BluetoothService(ILogService log)
         {
@@ -44,6 +49,11 @@ namespace BleScannerMaui
         public bool IsScanning { get; private set; } = false;
         public bool IsConnected => ConnectedDevice != null;
         public IDevice? ConnectedDevice { get; private set; }
+
+        public void ClearDiscoveredDevices()
+        {
+            _devices.Clear(); // Assuming _discoveredDevices is your internal list
+        }
 
         // === Event handlers ===
 
@@ -88,7 +98,9 @@ namespace BleScannerMaui
         public async Task StartScanAsync()
         {
             if (IsScanning) return;
-            _devices.Clear();
+            // Replace this line:
+            // DiscoveredDevices.Clear();
+
             _log.Append("Starting scan...");
             IsScanning = true;
             StatusUpdated?.Invoke("Scanning");
@@ -116,7 +128,7 @@ namespace BleScannerMaui
                 await _adapter.StopScanningForDevicesAsync();
                 IsScanning = false;
                 StatusUpdated?.Invoke("ScanStopped");
-                _log.Append("Scanning cancelled.");
+                _log.Append("Scanning canceled.");
             }
             catch (Exception ex)
             {
@@ -154,24 +166,56 @@ namespace BleScannerMaui
 
         public async Task DisconnectAsync()
         {
-            if (ConnectedDevice == null)
-            {
-                _log.Append("No device to disconnect.");
-                return;
-            }
+            if (ConnectedDevice == null) return;
 
             try
             {
-                _log.Append($"Disconnecting {ConnectedDevice.Name ?? ConnectedDevice.Id.ToString()}...");
-                await _adapter.DisconnectDeviceAsync(ConnectedDevice);
+                // Stop notifications
+                if (_notifyCharacteristic != null)
+                {
+                    try
+                    {
+                        await _notifyCharacteristic.StopUpdatesAsync();
+                        _log.Append("Stopped notifications.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Append($"Error stopping notifications: {ex.Message}");
+                    }
+                    _notifyCharacteristic = null;
+                }
+
+                // Disconnect
+                if (_adapter != null && ConnectedDevice != null)
+                {
+                    _log.Append($"Disconnecting from {ConnectedDevice.Name}...");
+                    await UnpairAsync(ConnectedDevice);
+                    //await _adapter.DisconnectDeviceAsync(ConnectedDevice);
+                    //_log.Append($"Disconnected from {ConnectedDevice.Name}");
+                }
+
+                // ✅ Unpair after disconnect
+                if (ConnectedDevice != null)
+                {
+                    await UnpairAsync(ConnectedDevice);
+                }
+
+                // Clear connected device
                 ConnectedDevice = null;
-                StatusUpdated?.Invoke("Disconnected");
+
+                // Optional: clear device list
+                _devices.Clear();
+                _log.Append("Device list cleared after disconnect.");
             }
             catch (Exception ex)
             {
-                _log.Append($"Disconnect failed: {ex.Message}");
+                _log.Append($"Disconnect error: {ex.Message}");
             }
         }
+
+
+
+
 
         // === Private helpers ===
 
@@ -246,6 +290,37 @@ namespace BleScannerMaui
             {
                 _log.Append($"Notification handling error: {ex.Message}");
             }
+        }
+        private async Task UnpairAsync(IDevice device)
+        {
+#if WINDOWS
+            try
+            {
+                if (device?.NativeDevice is Windows.Devices.Bluetooth.BluetoothLEDevice bleDevice)
+                {
+                    var devInfo = await Windows.Devices.Enumeration.DeviceInformation.CreateFromIdAsync(
+                        bleDevice.DeviceInformation.Id);
+
+                    if (devInfo.Pairing.IsPaired)
+                    {
+                        var result = await devInfo.Pairing.UnpairAsync();
+                        if (result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.Unpaired ||
+                            result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.AlreadyUnpaired)
+                        {
+                            _log.Append($"Device {device.Name} unpaired successfully.");
+                        }
+                        else
+                        {
+                            _log.Append($"Unpair failed: {result.Status}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Append($"Unpair error: {ex.Message}");
+            }
+#endif
         }
 
 #if WINDOWS
