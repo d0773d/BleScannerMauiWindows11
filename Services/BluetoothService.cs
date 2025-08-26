@@ -1,13 +1,8 @@
-﻿using Microsoft.Maui.ApplicationModel;
-using Plugin.BLE;
+﻿using Plugin.BLE;
 using Plugin.BLE.Abstractions;
 using Plugin.BLE.Abstractions.Contracts;
 using Plugin.BLE.Abstractions.EventArgs;
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
-using System.Threading.Tasks;
 
 
 #if WINDOWS
@@ -52,22 +47,41 @@ namespace BleScannerMaui
 
         public void ClearDiscoveredDevices()
         {
-            _devices.Clear(); // Assuming _discoveredDevices is your internal list
+            //_devices.Clear(); // Assuming _discoveredDevices is your internal list
         }
 
         // === Event handlers ===
 
         void Adapter_DeviceConnectionLost(object sender, DeviceErrorEventArgs e)
         {
-            _log.Append($"Connection lost: {e.Device?.Name} ({e.Device?.Id})");
-            ConnectedDevice = null;
             StatusUpdated?.Invoke("ConnectionLost");
+
+            if (_lastConnectAttemptDevice != null && _connectRetries < MaxConnectRetries)
+            {
+                _connectRetries++;
+                _log.Append($"Connection lost. Retrying {_connectRetries}/{MaxConnectRetries}...");
+                MainThread.BeginInvokeOnMainThread(async () =>
+                {
+                    await TryConnectAsync(_lastConnectAttemptDevice);
+                });
+            }
+            else if (_lastConnectAttemptDevice != null)
+            {
+                var deviceToUnpair = _lastConnectAttemptDevice; // Capture reference
+                _log.Append("Failed to connect after 3 attempts. Unpairing device...");
+                MainThread.BeginInvokeOnMainThread(async () =>
+                {
+                    await UnpairAsync(deviceToUnpair);
+                    _lastConnectAttemptDevice = null; // Only clear after unpair completes
+                    _connectRetries = 0;
+                });
+            }
         }
 
         void Adapter_DeviceDisconnected(object sender, DeviceEventArgs e)
         {
-            _log.Append($"Device disconnected: {e.Device?.Name} ({e.Device?.Id})");
-            ConnectedDevice = null;
+            //_log.Append($"Device disconnected: {e.Device?.Name} ({e.Device?.Id})");
+            //ConnectedDevice = null;
             StatusUpdated?.Invoke("Disconnected");
         }
 
@@ -98,8 +112,7 @@ namespace BleScannerMaui
         public async Task StartScanAsync()
         {
             if (IsScanning) return;
-            // Replace this line:
-            // DiscoveredDevices.Clear();
+            _devices.Clear();
 
             _log.Append("Starting scan...");
             IsScanning = true;
@@ -136,31 +149,59 @@ namespace BleScannerMaui
             }
         }
 
+        private int _connectRetries = 0;
+        private const int MaxConnectRetries = 3;
+        private IDevice? _lastConnectAttemptDevice;
+
         public async Task ConnectAsync(IDevice device)
         {
             if (device == null) throw new ArgumentNullException(nameof(device));
+            _lastConnectAttemptDevice = device;
+            _connectRetries = 0;
+            await TryConnectAsync(device);
+        }
+
+        private async Task TryConnectAsync(IDevice device)
+        {
+#if WINDOWS
+            // Only attempt to pair if NativeDevice is a BluetoothLEDevice
+            if (device?.NativeDevice is Windows.Devices.Bluetooth.BluetoothLEDevice bleDevice)
+            {
+                var devInfo = await Windows.Devices.Enumeration.DeviceInformation.CreateFromIdAsync(
+                    bleDevice.DeviceInformation.Id);
+
+                if (!devInfo.Pairing.IsPaired)
+                {
+                    bool paired = await EnsurePairedAsync(device.Id.ToString(), device.NativeDevice);
+                    if (!paired)
+                    {
+                        _log.Append("Pairing failed or canceled by user.");
+                        return;
+                    }
+                    _log.Append("Device paired successfully.");
+                }
+                else
+                {
+                    _log.Append("Device already paired. Skipping pairing step.");
+                }
+            }
+            else
+            {
+                _log.Append("NativeDevice is not a BluetoothLEDevice. Skipping pairing step.");
+            }
+#endif
 
             try
             {
-                _log.Append($"Ensuring secure pairing with {device.Name ?? device.Id.ToString()}...");
-
-#if WINDOWS
-                bool paired = await EnsurePairedAsync(device.Id.ToString(), device.NativeDevice);
-                if (!paired)
-                {
-                    _log.Append("Pairing failed or canceled by user.");
-                    return;
-                }
-                _log.Append("Device paired successfully.");
-#endif
-
                 var parameters = new ConnectParameters(autoConnect: false, forceBleTransport: true);
                 _log.Append("Connecting securely...");
                 await _adapter.ConnectToDeviceAsync(device, parameters);
+                // If connection is lost, event handler will handle retry
             }
             catch (Exception ex)
             {
-                _log.Append($"Secure connect failed: {ex.Message}");
+                _log.Append($"Connect failed: {ex.Message}");
+                // Optionally, you could retry here as well if you want to handle exceptions
             }
         }
 
@@ -168,9 +209,13 @@ namespace BleScannerMaui
         {
             if (ConnectedDevice == null) return;
 
+            var deviceToUnpair = ConnectedDevice; // Capture reference before disconnect
+
+            _log.Append($"Disconnecting from {deviceToUnpair.Name ?? deviceToUnpair.Id.ToString()}...");
+
             try
             {
-                // Stop notifications
+                // 1. Stop notifications if active
                 if (_notifyCharacteristic != null)
                 {
                     try
@@ -185,25 +230,24 @@ namespace BleScannerMaui
                     _notifyCharacteristic = null;
                 }
 
-                // Disconnect
-                if (_adapter != null && ConnectedDevice != null)
+                // 2. Disconnect from the device
+                if (_adapter != null && deviceToUnpair != null)
                 {
-                    _log.Append($"Disconnecting from {ConnectedDevice.Name}...");
-                    await UnpairAsync(ConnectedDevice);
-                    //await _adapter.DisconnectDeviceAsync(ConnectedDevice);
-                    //_log.Append($"Disconnected from {ConnectedDevice.Name}");
+                    _log.Append($"Disconnecting from {deviceToUnpair.Name}...");
+                    await UnpairAsync(deviceToUnpair);
+                    //await _adapter.DisconnectDeviceAsync(deviceToUnpair);
+                    _log.Append($"Disconnected from {deviceToUnpair.Name}");
                 }
 
-                // ✅ Unpair after disconnect
-                if (ConnectedDevice != null)
-                {
-                    await UnpairAsync(ConnectedDevice);
-                }
+                _log.Append($"My device: {deviceToUnpair}");
 
-                // Clear connected device
+                // 3. Optionally unpair (Windows only)
+                
+
+                // 4. Clear connected device reference
                 ConnectedDevice = null;
 
-                // Optional: clear device list
+                // 5. Optionally clear device list
                 _devices.Clear();
                 _log.Append("Device list cleared after disconnect.");
             }
@@ -294,32 +338,74 @@ namespace BleScannerMaui
         private async Task UnpairAsync(IDevice device)
         {
 #if WINDOWS
-            try
-            {
-                if (device?.NativeDevice is Windows.Devices.Bluetooth.BluetoothLEDevice bleDevice)
-                {
-                    var devInfo = await Windows.Devices.Enumeration.DeviceInformation.CreateFromIdAsync(
-                        bleDevice.DeviceInformation.Id);
+try
+{
+    _log.Append($"Device is: {device}");
+    
+    Windows.Devices.Bluetooth.BluetoothLEDevice? bleDevice = null;
 
-                    if (devInfo.Pairing.IsPaired)
-                    {
-                        var result = await devInfo.Pairing.UnpairAsync();
-                        if (result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.Unpaired ||
-                            result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.AlreadyUnpaired)
-                        {
-                            _log.Append($"Device {device.Name} unpaired successfully.");
-                        }
-                        else
-                        {
-                            _log.Append($"Unpair failed: {result.Status}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
+    if (device?.NativeDevice is Windows.Devices.Bluetooth.BluetoothLEDevice nativeBleDevice)
+    {
+        bleDevice = nativeBleDevice;
+        _log.Append("Using NativeDevice as BluetoothLEDevice for unpairing.");
+    }
+    else if (device != null)
+    {
+        // Try to find the device by name or address
+        var devices = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelector());
+        var match = devices.FirstOrDefault(d =>
+            d.Name == device.Name ||
+            d.Id.Contains(device.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+
+        if (match != null)
+        {
+            bleDevice = await Windows.Devices.Bluetooth.BluetoothLEDevice.FromIdAsync(match.Id);
+            _log.Append($"Found device by enumeration: {match.Name} ({match.Id})");
+        }
+        else
+        {
+            _log.Append("Could not find matching device by enumeration.");
+        }
+    }
+    else
+    {
+        _log.Append("Device is null. Cannot unpair.");
+    }
+
+    if (bleDevice != null)
+    {
+        var devInfo = await Windows.Devices.Enumeration.DeviceInformation.CreateFromIdAsync(
+            bleDevice.DeviceInformation.Id);
+
+        if (devInfo.Pairing.IsPaired)
+        {
+            var result = await devInfo.Pairing.UnpairAsync();
+            if (result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.Unpaired ||
+                result.Status == Windows.Devices.Enumeration.DeviceUnpairingResultStatus.AlreadyUnpaired)
             {
-                _log.Append($"Unpair error: {ex.Message}");
+                _log.Append($"Device {device.Name} unpaired successfully.");
             }
+            else
+            {
+                _log.Append($"Unpair failed: {result.Status}");
+            }
+        }
+        else
+        {
+            _log.Append($"Device {device.Name} was not paired.");
+        }
+    }
+    else
+    {
+        _log.Append("BluetoothLEDevice is null. Cannot unpair.");
+    }
+}
+catch (Exception ex)
+{
+    _log.Append($"Unpair error: {ex.Message}");
+}
+#else
+_log.Append("Unpairing is only supported on Windows.");
 #endif
         }
 
