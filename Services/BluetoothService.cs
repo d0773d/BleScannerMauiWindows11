@@ -22,6 +22,8 @@ namespace BleScannerMaui
         private ICharacteristic _notifyCharacteristic;
         readonly ObservableCollection<IDevice> _devices = new();
 
+        private bool _userInitiatedDisconnect = false;
+
 
         public BluetoothService(ILogService log)
         {
@@ -54,6 +56,13 @@ namespace BleScannerMaui
 
         void Adapter_DeviceConnectionLost(object sender, DeviceErrorEventArgs e)
         {
+            if (_userInitiatedDisconnect)
+            {
+                _userInitiatedDisconnect = false; // Reset for next time
+                StatusUpdated?.Invoke("ConnectionLost");
+                return;
+            }
+
             StatusUpdated?.Invoke("ConnectionLost");
 
             if (_lastConnectAttemptDevice != null && _connectRetries < MaxConnectRetries)
@@ -208,6 +217,8 @@ namespace BleScannerMaui
         public async Task DisconnectAsync()
         {
             if (ConnectedDevice == null) return;
+
+            _userInitiatedDisconnect = true; // Set the flag here
 
             var deviceToUnpair = ConnectedDevice; // Capture reference before disconnect
 
