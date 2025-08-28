@@ -15,12 +15,12 @@ namespace BleScannerMaui
 
         IDevice? _selectedDevice;
 
-        public MainPage(IBluetoothService bluetooth, ILogService log)
+        public MainPage(IBluetoothService bluetoothService, ILogService logService)
         {
             InitializeComponent();
 
-            _bluetooth = bluetooth;
-            _log = log;
+            _bluetooth = bluetoothService;
+            _log = logService;
 
             DevicesCollection.ItemsSource = _devices;
 
